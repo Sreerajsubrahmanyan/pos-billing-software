@@ -30,6 +30,12 @@ async function api(path, options = {}) {
   })
   if (response.status === 204) return null
   const body = await response.json().catch(() => ({}))
+  if (response.status === 401 && token && path !== '/login') {
+    window.dispatchEvent(new Event('loom:session-expired'))
+    const error = new Error('')
+    error.sessionExpired = true
+    throw error
+  }
   if (!response.ok) throw new Error(body.error || body.errors?.join(', ') || 'Something went wrong. Please try again.')
   return body
 }
@@ -48,6 +54,38 @@ function App() {
   const [refreshKey, setRefreshKey] = useState(0)
   const [loginError, setLoginError] = useState('')
   const [busy, setBusy] = useState(false)
+
+  useEffect(() => {
+    const handleSessionExpired = () => {
+      if (!localStorage.getItem('loom_token') && !localStorage.getItem('loom_user')) return
+      localStorage.removeItem('loom_token')
+      localStorage.removeItem('loom_user')
+      setUser(null)
+      setPage('dashboard')
+      setLoginError('Your session has expired. Please sign in again.')
+      setNotificationOpen(false)
+      setHelpOpen(false)
+      setToast('')
+    }
+    window.addEventListener('loom:session-expired', handleSessionExpired)
+    let expiryTimer
+    if (user) {
+      const token = localStorage.getItem('loom_token')
+      try {
+        const encodedPayload = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')
+        const payload = JSON.parse(atob(encodedPayload.padEnd(Math.ceil(encodedPayload.length / 4) * 4, '=')))
+        const expiresAt = Number(payload.exp) * 1000
+        if (!Number.isFinite(expiresAt)) throw new Error('Missing token expiry')
+        expiryTimer = window.setTimeout(() => window.dispatchEvent(new Event('loom:session-expired')), Math.max(0, expiresAt - Date.now()))
+      } catch {
+        window.dispatchEvent(new Event('loom:session-expired'))
+      }
+    }
+    return () => {
+      window.removeEventListener('loom:session-expired', handleSessionExpired)
+      window.clearTimeout(expiryTimer)
+    }
+  }, [user?.id])
 
   useEffect(() => {
     if (!notificationOpen) return undefined
